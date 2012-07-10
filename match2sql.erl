@@ -1,7 +1,9 @@
 -module(match2sql).
 
--export([test/0,
-	 tosql/1]).
+-include_lib("eunit/include/eunit.hrl").
+-include("match2sql.hrl").
+
+-export([tosql/2]).
 
 -define(AND, <<"AND">>).
 -define(SELECT, <<"SELECT">>).
@@ -17,17 +19,12 @@
 -define(COMMA, <<",">>).
 -define(DOT, <<".">>).
 
--record(foo, {bar, zar}).
-
-test() ->
-    tosql([{#foo{bar='$1',zar='$2'},[{'>','$1', 1}],['$1']}]),
-    F = tosql([{#foo{bar='$1',zar='$2'},[{'>',{'+','$2', 1}, 1}],['$1','$2']}]),
-    io:format("F is ~p", [F]).
-
-tosql([{Head, Match, Returns}]) ->
-    {TableName, Elements} = match_elements(Head),
+tosql([{Head, Match, Returns}], FieldNames) ->
+    [TableName|Data] = tuple_to_list(Head),
+    TableName0 = list_to_binary(atom_to_list(TableName)),
+    Elements = zip(TableName0, FieldNames, Data, []),
     Guards = convert_guards(Match, Elements, <<>>),
-    Select = convert_select(TableName, lists:flatten(Returns), Elements),
+    Select = convert_select(TableName0, lists:flatten(Returns), Elements),
     <<Select/binary, ?SPACE/binary, ?WHERE/binary,
       ?SPACE/binary, Guards/binary, ?END/binary>>.
 
@@ -99,12 +96,6 @@ get_rule('=:=') ->
 get_rule('=/=') ->
     <<?SPACE/binary,"!=",?SPACE/binary>>.
 
-match_elements(Head) ->
-    FieldNames = record_info(fields, foo),
-    [TableName|Data] = tuple_to_list(Head),
-    TableName0 = list_to_binary(atom_to_list(TableName)),
-    {TableName0, zip(TableName0, FieldNames, Data, [])}.
-
 zip(_,[], [], Ret) ->
     Ret;
 zip(T,[_FieldName|FieldNames], ['_'|Rest], Ret) ->
@@ -114,3 +105,13 @@ zip(TableName, [FieldName|FieldNames], [Data|Rest], Ret) ->
     Name = <<TableName/binary,?DOT/binary,Field/binary>>,
     zip(TableName, FieldNames, Rest,
 	Ret ++ [{Data, Name}]).
+
+% Test
+-record(foo, {bar, zar}).
+match2sql_test_() ->
+    [?_assertEqual(?match2sql([{#foo{bar='$1',zar='$2'},[{'>','$1', 1}],['$1']}], foo),
+		   <<"SELECT foo.bar FROM foo WHERE foo.bar > 1;">>),
+     ?_assertEqual(?match2sql([{#foo{bar='$1',zar='$2'},[{'>',{'+','$2', 1}, 1}],['$1','$2']}], foo),
+		   <<"SELECT foo.bar,foo.zar FROM foo WHERE (foo.zar + 1) > 1;">>)
+    ].
+    
